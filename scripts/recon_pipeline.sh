@@ -65,18 +65,36 @@ if command -v naabu >/dev/null 2>&1; then
 fi
 
 # 5) Endpoint & Rota Keşfi (katana & waybackurls)
-echo "[4/7] Endpoint ve parametre keşfi (katana)..."
+echo "[4/9] Endpoint ve parametre keşfi (katana & waybackurls)..."
 if command -v katana >/dev/null 2>&1; then
   cat "$OUTDIR/live_urls.txt" | katana -silent -jc -kf -d 2 -o "$OUTDIR/katana_paths.txt" || true
 fi
 
 if command -v waybackurls >/dev/null 2>&1; then
-  echo "[4/7b] Tarihsel Wayback Machine rotaları çekiliyor..."
+  echo "[4/9b] Tarihsel Wayback Machine rotaları çekiliyor..."
   cat "$OUTDIR/all_subs.txt" | waybackurls | sort -u > "$OUTDIR/wayback_paths.txt" || true
 fi
 
-# 6) Zafiyet Taraması (nuclei)
-echo "[5/7] Template bazlı güvenlik denetimi yürütülüyor (nuclei)..."
+# 5b) Rotaları Birleştir ve Tekilleştir
+cat "$OUTDIR/katana_paths.txt" "$OUTDIR/wayback_paths.txt" 2>/dev/null | grep -E "^https?://" | sort -u > "$OUTDIR/all_endpoints.txt" || true
+TOTAL_ENDPOINTS=$(wc -l < "$OUTDIR/all_endpoints.txt" 2>/dev/null || echo 0)
+echo "[✓] Toplam keşfedilen endpoint ve rota: $TOTAL_ENDPOINTS"
+
+# 6) Hassas Parametre Ayıklama (gf patterns)
+echo "[5/9] Hassas parametreler ayıklanıyor (gf patterns)..."
+mkdir -p "$OUTDIR/gf_patterns"
+if command -v gf >/dev/null 2>&1 && [ -s "$OUTDIR/all_endpoints.txt" ]; then
+  for pat in ssrf idor sqli rce lfi redirect xss ssti; do
+    cat "$OUTDIR/all_endpoints.txt" | gf "$pat" 2>/dev/null | sort -u > "$OUTDIR/gf_patterns/$pat.txt" || true
+    COUNT=$(wc -l < "$OUTDIR/gf_patterns/$pat.txt" 2>/dev/null || echo 0)
+    if [ "$COUNT" -gt 0 ]; then
+      echo "    ↳ [!] $pat parametresi bulundu: $COUNT adet ($OUTDIR/gf_patterns/$pat.txt)"
+    fi
+  done
+fi
+
+# 7) Zafiyet Taraması (nuclei)
+echo "[6/9] Template bazlı güvenlik denetimi yürütülüyor (nuclei)..."
 if command -v nuclei >/dev/null 2>&1; then
   nuclei -l "$OUTDIR/live_urls.txt" \
          -s critical,high,medium \
@@ -89,9 +107,9 @@ else
   echo "[!] nuclei kurulu değil, atlanıyor."
 fi
 
-# 7) Fuzzing (ffuf)
+# 8) Fuzzing (ffuf)
 if command -v ffuf >/dev/null 2>&1 && [ -f "$OUTDIR/live_urls.txt" ]; then
-  echo "[6/7] Gizli admin ve hassas dosya fuzzing (ffuf)..."
+  echo "[7/9] Gizli admin ve hassas dosya fuzzing (ffuf)..."
   SAMPLE_TARGET=$(head -n 1 "$OUTDIR/live_urls.txt" || true)
   if [ -n "$SAMPLE_TARGET" ]; then
     ffuf -u "${SAMPLE_TARGET}/FUZZ" \
@@ -102,8 +120,16 @@ if command -v ffuf >/dev/null 2>&1 && [ -f "$OUTDIR/live_urls.txt" ]; then
   fi
 fi
 
-# 8) Triage & Rapor Üretimi (agent.py)
-echo "[7/7] Sonuçlar ayıklanıyor ve PoC raporu üretiliyor (agent.py)..."
+# 9) SQLi Doğrulama Adayları (sqlmap referansı)
+if [ -s "$OUTDIR/gf_patterns/sqli.txt" ]; then
+  echo "[8/9] SQLi aday parametreleri tespit edildi. sqlmap doğrulaması hazırlanıyor..."
+  grep "?" "$OUTDIR/gf_patterns/sqli.txt" | head -n 5 | while read -r line; do
+    echo "sqlmap -u \"$line\" --batch --dbs --random-agent"
+  done > "$OUTDIR/sqlmap_commands.txt"
+fi
+
+# 10) Triage & Rapor Üretimi (agent.py)
+echo "[9/9] Sonuçlar ayıklanıyor ve PoC raporu üretiliyor (agent.py)..."
 python3 "$(dirname "$0")/agent.py" --outdir "$OUTDIR"
 
 echo "=================================================================="
