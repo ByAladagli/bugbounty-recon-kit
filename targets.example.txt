@@ -1,0 +1,5 @@
+# Targets list for reconnaissance
+# One domain per line (no protocol prefix)
+example.com
+api.example.com
+admin.example.com

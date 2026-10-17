@@ -1,0 +1,50 @@
+# NOTE: Disabled by default for safety. Use workflow_dispatch manually on authorized targets only.
+name: Manual Recon & Triage Dispatch
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_domain:
+        description: 'Authorized Target Domain (e.g., example.com)'
+        required: true
+        default: 'example.com'
+
+jobs:
+  recon-triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go 1.22
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install ProjectDiscovery Tools
+        run: |
+          go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+          go install github.com/projectdiscovery/httpx/cmd/httpx@latest
+          go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest
+          nuclei -ut
+
+      - name: Install Python Dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run Reconnaissance Pipeline
+        run: |
+          echo "${{ github.event.inputs.target_domain }}" > targets.txt
+          chmod +x ./scripts/recon_pipeline.sh
+          ./scripts/recon_pipeline.sh targets.txt outputs
+
+      - name: Upload Triage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: recon-triage-report
+          path: outputs/report.md
